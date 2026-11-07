@@ -119,6 +119,42 @@ def experiment_methods(corpus):
     return rows
 
 
+def experiment_damping(corpus):
+    print("\n=== Эксперимент 2: коэффициент затухания d ===")
+    rows = []
+    for d in [0.1, 0.3, 0.5, 0.7, 0.85, 0.95]:
+        iters = []
+
+        def fn(t, d=d):
+            m = TextRankSummarizer("cosine", damping=d)
+            s = m.summarize(t, N)
+            iters.append(len(m.history))
+            return s
+        mean, _ = evaluate(fn, corpus)
+        rows.append([d, f"{mean['rouge-1']:.3f}", f"{mean['rouge-l']:.3f}", f"{np.mean(iters):.1f}"])
+        print(f"d={d:<5} ROUGE-1={mean['rouge-1']:.3f}  ROUGE-L={mean['rouge-l']:.3f}  итераций={np.mean(iters):.1f}")
+    save_csv(OUT / "exp2_damping.csv", ["d", "ROUGE-1", "ROUGE-L", "Итераций"], rows)
+    return rows
+
+
+def experiment_threshold(corpus):
+    print("\n=== Эксперимент 3: порог отсечения рёбер ===")
+    rows = []
+    for th in [0.0, 0.05, 0.1, 0.15, 0.2, 0.3]:
+        dens = []
+
+        def fn(t, th=th):
+            m = TextRankSummarizer("cosine", threshold=th)
+            s = m.summarize(t, N)
+            dens.append(graph_stats(m.matrix)["плотность"])
+            return s
+        mean, _ = evaluate(fn, corpus)
+        rows.append([th, f"{np.mean(dens):.2f}", f"{mean['rouge-1']:.3f}", f"{mean['rouge-l']:.3f}"])
+        print(f"порог={th:<5} плотность={np.mean(dens):.2f}  ROUGE-1={mean['rouge-1']:.3f}  ROUGE-L={mean['rouge-l']:.3f}")
+    save_csv(OUT / "exp3_threshold.csv", ["Порог", "Плотность графа", "ROUGE-1", "ROUGE-L"], rows)
+    return rows
+
+
 def experiment_convergence(corpus):
     print("\n=== Эксперимент 4: сходимость PageRank ===")
     name, text, _ = corpus[0]
@@ -141,6 +177,44 @@ def experiment_convergence(corpus):
     return hist
 
 
+def experiment_graph_picture(corpus):
+    print("\n=== Эксперимент 5: визуализация графа ===")
+    import networkx as nx
+    name, text, ref = corpus[0]
+    m = TextRankSummarizer("cosine")  # те же настройки, что и в основном эксперименте
+    summary = m.summarize(text, N)
+    SHOW = 0.05  # на рисунке показываем только рёбра с весом > 0.1, иначе получится «каша»
+    G = nx.Graph()
+    n = len(m.sentences)
+    G.add_nodes_from(range(n))
+    for i in range(n):
+        for j in range(i + 1, n):
+            if m.matrix[i, j] > SHOW:
+                G.add_edge(i, j, weight=m.matrix[i, j])
+
+    pos = nx.circular_layout(G)  # вершины по кругу в порядке предложений
+    scores = np.array(m.scores)
+    sizes = 250 + 1600 * (scores - scores.min()) / (scores.max() - scores.min() + 1e-9)
+    colors = ["#c2557a" if i in m.selected else "#9fb8cf" for i in range(n)]
+    widths = [8 * G[u][v]["weight"] for u, v in G.edges()]
+
+    fig, ax = plt.subplots(figsize=(8, 6.5))
+    nx.draw_networkx_edges(G, pos, width=widths, alpha=0.45, edge_color="#5b6b7b", ax=ax)
+    nx.draw_networkx_nodes(G, pos, node_size=sizes, node_color=colors, edgecolors="white", ax=ax)
+    nx.draw_networkx_labels(G, pos, {i: str(i + 1) for i in range(n)}, font_size=10, ax=ax)
+    ax.set_title("Граф предложений текста «Байкал»\n(размер = оценка PageRank, розовые = вошли в реферат; рёбра с весом > 0.05)")
+    ax.axis("off")
+    fig.tight_layout()
+    fig.savefig(OUT / "exp5_graph.png", dpi=150)
+    plt.close(fig)
+
+    rows = [[num, f"{score:.4f}", "да" if num - 1 in m.selected else "", sent]
+            for num, score, sent in m.ranking_table()]
+    save_csv(OUT / "exp5_ranking_baikal.csv", ["№", "PageRank", "В реферате", "Предложение"], rows)
+    (OUT / "exp5_summary_baikal.txt").write_text(summary, encoding="utf-8")
+    print("Реферат:", summary)
+
+
 def corpus_stats(corpus):
     rows = []
     for name, text, ref in corpus:
@@ -154,5 +228,8 @@ if __name__ == "__main__":
     corpus = load_corpus()
     corpus_stats(corpus)
     experiment_methods(corpus)
+    experiment_damping(corpus)
+    experiment_threshold(corpus)
     experiment_convergence(corpus)
+    experiment_graph_picture(corpus)
     print("\nГотово. Результаты в папке results/")
